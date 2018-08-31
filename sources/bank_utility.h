@@ -20,31 +20,29 @@
 #include <QHash>
 #include <string.h>
 
-namespace std {
+inline FmBank::Instrument clean_instrument(const FmBank::Instrument &x)
+{
+    FmBank::Instrument clean(x);
+    memset(clean.name, 0, sizeof(FmBank::Instrument::name));
+    clean.is_blank = false;
+    clean.ms_sound_kon = 0;
+    clean.ms_sound_koff = 0;
+    return x;
+}
 
-template <class T> struct hash;
-
-template <> struct hash<FmBank::Instrument> {
-    size_t operator()(const FmBank::Instrument &x) const {
-        FmBank::Instrument noname_x(x);
-        memset(noname_x.name, 0, sizeof(FmBank::Instrument::name));
-        noname_x.ms_sound_kon = 0;
-        noname_x.ms_sound_koff = 0;
-        return qHashBits(&noname_x, sizeof(FmBank::Instrument));
+struct measurer_cache_hash {
+    size_t operator()(const FmBank::Instrument &x) const
+    {
+        FmBank::Instrument clean_x = clean_instrument(x);
+        return qHashBits(&clean_x, sizeof(FmBank::Instrument));
     }
 };
 
-}
-
-inline bool operator==(const FmBank::Instrument &a, const FmBank::Instrument &b)
-{
-    FmBank::Instrument noname_a(a);
-    FmBank::Instrument noname_b(b);
-    memset(noname_a.name, 0, sizeof(FmBank::Instrument::name));
-    memset(noname_b.name, 0, sizeof(FmBank::Instrument::name));
-    noname_a.ms_sound_kon = 0;
-    noname_a.ms_sound_koff = 0;
-    noname_b.ms_sound_kon = 0;
-    noname_b.ms_sound_koff = 0;
-    return !memcmp(&noname_a, &noname_b, sizeof(FmBank::Instrument));
-}
+struct measurer_cache_equal {
+    bool operator()(const FmBank::Instrument &a, const FmBank::Instrument &b) const
+    {
+        FmBank::Instrument clean_a = clean_instrument(a);
+        FmBank::Instrument clean_b = clean_instrument(b);
+        return !memcmp(&clean_a, &clean_b, sizeof(FmBank::Instrument));
+    }
+};

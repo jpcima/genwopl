@@ -277,8 +277,13 @@ bool load_bank(const IniBank &ib, const std::string &basedir, FmBank &bank)
 
 void measure_banks(std::vector<FmBank> &banks)
 {
-    std::unordered_map<FmBank::Instrument, std::unique_ptr<Measurer::DurationInfo>> cache;
+    std::unordered_map<
+        FmBank::Instrument,
+        std::unique_ptr<Measurer::DurationInfo>,
+        measurer_cache_hash, measurer_cache_equal> cache;
     std::mutex cache_mutex;
+
+    const FmBank::Instrument empty_inst = FmBank::emptyInst();
 
     // reserve a flat list to keep all instruments
     std::vector<FmBank::Instrument *> all_ins;
@@ -303,6 +308,8 @@ void measure_banks(std::vector<FmBank> &banks)
     // count the number of non-duplicate entries
     size_t ins_total = 0;
     for (FmBank::Instrument *ins : all_ins) {
+        if (measurer_cache_equal{}(*ins, empty_inst))
+            continue;
         size_t old_count = cache.size();
         cache[*ins];
         ins_total += (cache.size() != old_count) ? 1 : 0;
@@ -321,7 +328,8 @@ void measure_banks(std::vector<FmBank> &banks)
             fprintf(stderr, "Measurement completion %zu/%zu\n", done, all_ins_size);
         }
 
-        if (ins.is_blank) {
+        if (measurer_cache_equal{}(ins, empty_inst)) {
+            ins.is_blank = true;
             ins.ms_sound_kon = 0;
             ins.ms_sound_koff = 0;
         }

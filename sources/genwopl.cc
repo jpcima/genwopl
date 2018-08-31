@@ -18,6 +18,7 @@
 
 #include "genwopl.h"
 #include "ini/ini_processing.h"
+#include "opl/measurer.h"
 #include "FileFormats/format_adlib_bnk.h"
 #include "FileFormats/format_ail2_gtl.h"
 #include "FileFormats/format_apogeetmb.h"
@@ -26,9 +27,12 @@
 #include "FileFormats/format_junlevizion.h"
 #include "FileFormats/format_sb_ibk.h"
 #include "FileFormats/format_wohlstand_opl3.h"
+#include <unordered_map>
 #include <memory>
 #include <getopt.h>
 #include <stdio.h>
+#include <sys/stat.h>
+#include <sys/types.h>
 
 int main(int argc, char *argv[])
 {
@@ -40,12 +44,13 @@ int main(int argc, char *argv[])
         }
     }
 
-    if (argc - optind != 1) {
+    if (argc - optind != 2) {
         fprintf(stderr, "Bad number of arguments.\n");
         return 1;
     }
 
     std::string ini_filename = argv[optind];
+    std::string out_directory = argv[optind + 1];
     std::string ini_basedir;
     {
         size_t pos = ini_filename.rfind('/');
@@ -67,9 +72,23 @@ int main(int argc, char *argv[])
         return 1;
     }
 
-    
-    
-    
+    measure_banks(banks);
+
+    ///
+    mkdir(out_directory.c_str(), 0755);
+
+    uint32_t banks_count = banks.size();
+    for (uint32_t i = 0; i < banks_count; ++i) {
+        const std::string &name = ini->banks[i].bank_name;
+        char str_num[16];
+        sprintf(str_num, "%03u", i);
+        std::string out_filename = out_directory + "/" + str_num + " " + name;
+        WohlstandOPL3 fmt;
+        if (fmt.saveFile(QString::fromStdString(out_filename), banks[i]) != FfmtErrCode::ERR_OK) {
+            fprintf(stderr, "Error saving bank.\n");
+            return 1;
+        }
+    }
 
     return 0;
 }
@@ -231,7 +250,7 @@ bool load_bank(const IniBank &ib, const std::string &basedir, FmBank &bank)
     }
 
     if (false) {
-        FmBank::Instrument emptyIns = FmBank::emptyInst();
+        const FmBank::Instrument emptyIns = FmBank::emptyInst();
         unsigned n_melo = bank.Banks_Melodic.size();
         unsigned n_drum = bank.Banks_Percussion.size();
         for (unsigned b_i = 0; b_i < n_melo + n_drum; ++b_i) {
@@ -252,4 +271,66 @@ bool load_bank(const IniBank &ib, const std::string &basedir, FmBank &bank)
     }
 
     return true;
+}
+
+void measure_banks(std::vector<FmBank> &banks)
+{
+    unsigned ins_total = 0;
+    std::unordered_map<FmBank::Instrument, std::unique_ptr<Measurer::DurationInfo>> cache;
+
+    for (FmBank &bank : banks) {
+        unsigned n_melo = bank.countMelodic();
+        unsigned n_drum = bank.countDrums();
+        for (unsigned i = 0, n = n_melo + n_drum; i < n; ++i) {
+            FmBank::Instrument &ins = (i < n_melo) ?
+                bank.Ins_Melodic[i] : bank.Ins_Percussion[i - n_melo];
+            if (ins.is_blank)
+                continue;
+            size_t count = cache.size();
+            cache[ins];
+            if (cache.size() != count)
+                ++ins_total;
+        }
+    }
+
+    double completion = -1;
+    double prev_completion = -1;
+    unsigned completion_index = 0;
+
+    size_t bank_count = banks.size();
+
+    for (size_t b_i = 0; b_i < bank_count; ++b_i) {
+        FmBank &bank = banks[b_i];
+        unsigned n_melo = bank.countMelodic();
+        unsigned n_drum = bank.countDrums();
+        for (unsigned i = 0, n = n_melo + n_drum; i < n; ++i) {
+            prev_completion = completion;
+            completion = (double)completion_index / ins_total;
+
+            if ((int)(completion * 100) > (int)(prev_completion * 100))
+                fprintf(stderr, "Measurer completion %d%% %u/%u\n",
+                        (int)(completion * 100), 1 + completion_index, ins_total);
+            ++completion_index;
+
+            FmBank::Instrument &ins = (i < n_melo) ?
+                bank.Ins_Melodic[i] : bank.Ins_Percussion[i - n_melo];
+            if (ins.is_blank) {
+                ins.ms_sound_kon = 0;
+                ins.ms_sound_koff = 0;
+                continue;
+            }
+            std::unique_ptr<Measurer::DurationInfo> &slot = cache[ins];
+            Measurer::DurationInfo *info;
+            if (slot)
+                info = slot.get();
+            else {
+                info = new Measurer::DurationInfo;
+                slot.reset(info);
+                Measurer measurer;
+                measurer.doComputation(ins, *info);
+            }
+            ins.ms_sound_kon = info->ms_sound_kon;
+            ins.ms_sound_koff = info->ms_sound_koff;
+        }
+    }
 }

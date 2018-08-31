@@ -17,28 +17,22 @@
  */
 
 #include "bank.h"
-#include "bank_utility.h"
-#include <string>
-#include <vector>
+#include <QHash>
+#include <string.h>
 
-struct IniBank
-{
-    std::string bank_name;
-    std::string filepath;
-    std::string filepath_d;
-    std::string prefix;
-    std::string prefix_d;
-    std::string filter_m;
-    std::string filter_p;
-    std::string format;
+namespace std {
+
+template <class T> struct hash;
+
+template <> struct hash<FmBank::Instrument> {
+    size_t operator()(const FmBank::Instrument &x) const {
+        return qHashBits(&x, sizeof(FmBank::Instrument));
+    }
 };
 
-struct IniBanks
-{
-    std::vector<IniBank> banks;
-};
+}
 
-IniBanks *load_ini(const char *ini_filename);
-bool load_banks(const IniBanks &ini, const std::string &basedir, std::vector<FmBank> &banks);
-bool load_bank(const IniBank &ib, const std::string &basedir, FmBank &bank);
-void measure_banks(std::vector<FmBank> &banks);
+inline bool operator==(const FmBank::Instrument &a, const FmBank::Instrument &b)
+{
+    return !memcmp(&a, &b, sizeof(FmBank::Instrument));
+}

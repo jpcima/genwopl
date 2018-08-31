@@ -26,7 +26,11 @@ template <class T> struct hash;
 
 template <> struct hash<FmBank::Instrument> {
     size_t operator()(const FmBank::Instrument &x) const {
-        return qHashBits(&x, sizeof(FmBank::Instrument));
+        FmBank::Instrument noname_x(x);
+        memset(noname_x.name, 0, sizeof(FmBank::Instrument::name));
+        noname_x.ms_sound_kon = 0;
+        noname_x.ms_sound_koff = 0;
+        return qHashBits(&noname_x, sizeof(FmBank::Instrument));
     }
 };
 
@@ -34,5 +38,13 @@ template <> struct hash<FmBank::Instrument> {
 
 inline bool operator==(const FmBank::Instrument &a, const FmBank::Instrument &b)
 {
-    return !memcmp(&a, &b, sizeof(FmBank::Instrument));
+    FmBank::Instrument noname_a(a);
+    FmBank::Instrument noname_b(b);
+    memset(noname_a.name, 0, sizeof(FmBank::Instrument::name));
+    memset(noname_b.name, 0, sizeof(FmBank::Instrument::name));
+    noname_a.ms_sound_kon = 0;
+    noname_a.ms_sound_koff = 0;
+    noname_b.ms_sound_kon = 0;
+    noname_b.ms_sound_koff = 0;
+    return !memcmp(&noname_a, &noname_b, sizeof(FmBank::Instrument));
 }

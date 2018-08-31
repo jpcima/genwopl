@@ -29,6 +29,8 @@
 #include "FileFormats/format_wohlstand_opl3.h"
 #include <unordered_map>
 #include <memory>
+#include <atomic>
+#include <mutex>
 #include <getopt.h>
 #include <stdio.h>
 #include <sys/stat.h>
@@ -275,59 +277,66 @@ bool load_bank(const IniBank &ib, const std::string &basedir, FmBank &bank)
 
 void measure_banks(std::vector<FmBank> &banks)
 {
-    unsigned ins_total = 0;
     std::unordered_map<FmBank::Instrument, std::unique_ptr<Measurer::DurationInfo>> cache;
+    std::mutex cache_mutex;
 
+    // reserve a flat list to keep all instruments
+    std::vector<FmBank::Instrument *> all_ins;
+    size_t all_ins_capacity = 0;
     for (FmBank &bank : banks) {
-        unsigned n_melo = bank.countMelodic();
-        unsigned n_drum = bank.countDrums();
-        for (unsigned i = 0, n = n_melo + n_drum; i < n; ++i) {
+        all_ins_capacity += bank.countMelodic();
+        all_ins_capacity += bank.countDrums();
+    }
+    all_ins.reserve(all_ins_capacity);
+    // collect instruments in a flat list
+    for (FmBank &bank : banks) {
+        size_t n_melo = bank.countMelodic();
+        size_t n_drum = bank.countDrums();
+        for (size_t i = 0, n = n_melo + n_drum; i < n; ++i) {
             FmBank::Instrument &ins = (i < n_melo) ?
                 bank.Ins_Melodic[i] : bank.Ins_Percussion[i - n_melo];
-            if (ins.is_blank)
-                continue;
-            size_t count = cache.size();
-            cache[ins];
-            if (cache.size() != count)
-                ++ins_total;
+            all_ins.push_back(&ins);
         }
     }
+    size_t all_ins_size = all_ins.size();
 
-    double completion = -1;
-    double prev_completion = -1;
-    unsigned completion_index = 0;
+    // count the number of non-duplicate entries
+    size_t ins_total = 0;
+    for (FmBank::Instrument *ins : all_ins) {
+        size_t old_count = cache.size();
+        cache[*ins];
+        ins_total += (cache.size() != old_count) ? 1 : 0;
+    }
+    fprintf(stderr, "Cache count %zu\n", ins_total);
 
-    size_t bank_count = banks.size();
+    // perform
+    std::atomic<size_t> ins_done_count;
+    ins_done_count.store(0);
+    #pragma omp parallel for
+    for (size_t i = 0; i < all_ins_size; ++i) {
+        FmBank::Instrument &ins = *all_ins[i];
 
-    for (size_t b_i = 0; b_i < bank_count; ++b_i) {
-        FmBank &bank = banks[b_i];
-        unsigned n_melo = bank.countMelodic();
-        unsigned n_drum = bank.countDrums();
-        for (unsigned i = 0, n = n_melo + n_drum; i < n; ++i) {
-            prev_completion = completion;
-            completion = (double)completion_index / ins_total;
+        size_t done = ins_done_count.fetch_add(1);
+        if (done % 50 == 0) {
+            fprintf(stderr, "Measurement completion %zu/%zu\n", done, all_ins_size);
+        }
 
-            if ((int)(completion * 100) > (int)(prev_completion * 100))
-                fprintf(stderr, "Measurer completion %d%% %u/%u\n",
-                        (int)(completion * 100), 1 + completion_index, ins_total);
-            ++completion_index;
-
-            FmBank::Instrument &ins = (i < n_melo) ?
-                bank.Ins_Melodic[i] : bank.Ins_Percussion[i - n_melo];
-            if (ins.is_blank) {
-                ins.ms_sound_kon = 0;
-                ins.ms_sound_koff = 0;
-                continue;
-            }
-            std::unique_ptr<Measurer::DurationInfo> &slot = cache[ins];
+        if (ins.is_blank) {
+            ins.ms_sound_kon = 0;
+            ins.ms_sound_koff = 0;
+        }
+        else {
+            std::unique_ptr<Measurer::DurationInfo> &slot = cache.at(ins);
             Measurer::DurationInfo *info;
             if (slot)
                 info = slot.get();
             else {
-                info = new Measurer::DurationInfo;
-                slot.reset(info);
+                std::unique_ptr<Measurer::DurationInfo> info_p(new Measurer::DurationInfo);
+                info = info_p.get();
                 Measurer measurer;
                 measurer.doComputation(ins, *info);
+                std::lock_guard<std::mutex> cache_lock(cache_mutex);
+                slot = std::move(info_p);
             }
             ins.ms_sound_kon = info->ms_sound_kon;
             ins.ms_sound_koff = info->ms_sound_koff;
